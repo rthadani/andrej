@@ -6,7 +6,7 @@
             [aerial.hanami.templates :as ht]
             [aerial.hanami.core :as hmi]
             [dorothy.core :as dot]
-            [autograd.ops :refer [value + * tanh backward gradient set-gradient]]
+            [autograd.ops :refer [value + * tanh backward gradient set-gradient ] :as ops]
             [clojure.java.io :as io]
             [fastmath.core :as math])
    (:import [javax.imageio ImageIO]))
@@ -73,7 +73,7 @@
   (let [[nodes edges] (trace-root root)
         [dot-nodes dot-edges] (reduce (fn [result {:keys [label data op] :as n}]
                                         (let [uid (str (hash n))
-                                              value-node [uid {:label  (format "%s | data %.4f | grad %.4f" label data (gradient n)) :shape :record}]
+                                              value-node [uid {:label  (format "%s | data %.4f | grad %.4f" label (float data) (float (gradient n))) :shape :record}]
                                               op-node [(str uid op) {:label op}]]
                                           (if (not-empty op)
                                             [(conj (first result) value-node op-node) (conj (second result) [(first op-node) uid])]
@@ -197,3 +197,11 @@
 ^::clerk/no-cache (ImageIO/read  (io/file "out5.png"))
 
 
+(:data (ops/activate (ops/neuron [2.0 3.0])))
+
+(map :data (ops/forward (ops/layer [2.0 3.0] 3)))
+
+^::clerk/no-cache
+(def mlp-nn (ops/mlp [2.0 3.0 -1.0] [4 4 1]))
+^::clerk/no-cache (draw-dot mlp-nn "out6.png")
+^::clerk/no-cache (ImageIO/read  (io/file "out6.png"))

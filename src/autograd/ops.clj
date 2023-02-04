@@ -68,9 +68,9 @@
 
 (defn value
   ([data]
-   (value data [] "" "" 0))
+   (value data [] "" "" 0.0))
   ([data label]
-   (value data [] "" label 0))
+   (value data [] "" label 0.0))
   ([data label grad]
    (value data [] "" label grad))
   ([data children op label grad]
@@ -111,7 +111,6 @@
         bias (frandom/frand -1.0 1.0)]
     (->Neuron inputs weights bias)))
 
-#_(:data (activate (neuron [2.0 3.0])))
 (defprotocol LayerOps
   (forward [_]))
 
@@ -128,8 +127,12 @@
   [inputs num-outputs]
   (->Layer (for [_ (range num-outputs)] (neuron inputs)) num-outputs))
 
-#_(map :data (forward (layer [2.0 3.0] 3)))
 
 (defn mlp
-  []
-  )
+  [inputs layer-sizes]
+  (forward 
+    (reduce (fn [nn outputs] (println nn) (layer (forward nn) outputs)) 
+          (layer inputs (first layer-sizes)) 
+          (rest layer-sizes))))
+
+

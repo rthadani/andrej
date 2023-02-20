@@ -20,16 +20,16 @@
   Ops
   (+ [this other]
     (let [other (if (not= (type other) Value) (value other) other)]
-      (->Value (clojure.core/+ (:data this) (:data other)) [this other] "+" "" (atom 0.0) 0.0)))
+      (->Value (clojure.core/+ data (:data other)) [this other] "+" "" (atom 0.0) 0.0)))
   (* [this other]
     (let [other (if (not= (type other) Value) (value other) other)]
-      (->Value (clojure.core/* (:data this) (:data other)) [this other] "*" "" (atom 0.0) 0.0)))
+      (->Value (clojure.core/* data (:data other)) [this other] "*" "" (atom 0.0) 0.0)))
   (- [this other]
     (+ this (* -1.0 other)))
   (/ [this other]
     (* this (** other -1)))
   (** [this x]
-    (->Value (Math/pow(:data this) x) [this] "**" "" (atom 0.0) x))
+    (->Value (Math/pow data x) [this] "**" "" (atom 0.0) x))
   (tanh [this]
     (let [x data
           e**2x (Math/exp (* x 2))
@@ -54,11 +54,11 @@
         (assoc this :children [child1 child2]))
       (= op "tanh")
       (do (swap! (:grad (first children)) + (- 1 (Math/pow data 2)))
-          (backward (first children)))
+          (assoc this :children [(backward (first children))]))
       (= op "**")
       (do 
         (swap! (:grad (first children)) + (* (* exp (** data (dec exp))) @grad)) 
-        (backward (first children)))
+        (assoc this :children [(backward (first children))]))
       :else this))
   (gradient [_]
     @grad)
@@ -94,45 +94,67 @@
   (- [this other] (if (= (type other) Value) (- (value this) other) (clojure.core/- this other))) 
   (/ [this other] (if (= (type other) Value) (/ (value this) other) (clojure.core// this other))))
 
-
+(defprotocol Parameters
+  (parameters [_])
+  (update-parameters [_ step]))
 (defprotocol NeuronOps
-  (activate [_]))
+  (activate [_ inputs]))
 
 (defrecord Neuron
-  [inputs weights bias]
+  [weights bias]
   NeuronOps
-  (activate [_]
-    (let [weighted-inputs (map * (map value inputs) (map value weights))]
-      (tanh (reduce + bias weighted-inputs)))))
+  (activate [_ inputs]
+    (let [weighted-inputs (map * (map value inputs) weights)]
+      (tanh (reduce + bias weighted-inputs))))
+  Parameters
+  (parameters [_]
+    (conj weights bias))
+  (update-parameters [_ step]
+    (->Neuron (map  #(update % :data clojure.core/+ (clojure.core/* step @(:grad %))) weights) (update bias :data  + (* step @(:grad bias))))))
 
 (defn neuron
-  [inputs]
-  (let [weights (map (fn [_] (frandom/frand -1.0 1.0)) ( range (count inputs))) 
+  [num-inputs]
+  (let [weights (map (fn [_] (frandom/frand -1.0 1.0)) (range num-inputs)) 
         bias (frandom/frand -1.0 1.0)]
-    (->Neuron inputs weights bias)))
+    (->Neuron (map value weights) (value bias))))
 
 (defprotocol LayerOps
-  (forward [_]))
+  (forward [_ inputs]))
 
 (defrecord Layer
   [neurons num-outputs]
   LayerOps
-  (forward [_]
-    (let [output (map activate neurons)]
+  (forward [_ inputs]
+    (let [output (map #(activate % inputs) neurons)]
      (if (= 1 num-outputs)
        (first output)
-       output))))
+       output)))
+  Parameters
+  (parameters [_]
+    (mapcat parameters neurons))
+  (update-parameters [_ step]
+    (->Layer (map #(update-parameters % step) neurons) num-outputs)))
 
 (defn layer
-  [inputs num-outputs]
-  (->Layer (for [_ (range num-outputs)] (neuron inputs)) num-outputs))
+  [num-inputs num-outputs]
+  (->Layer (for [_ (range num-outputs)] (neuron num-inputs)) num-outputs))
 
+(defrecord MLP [layers]
+  LayerOps
+  (forward [_ inputs]
+    (reduce (fn [nn layer] 
+              (forward layer nn)) 
+          inputs 
+          layers))
+  Parameters
+  (parameters [_]
+     (mapcat parameters layers))
+  (update-parameters [_ step]
+     (->MLP (map #(update-parameters % step) layers))))
 
 (defn mlp
-  [inputs layer-sizes]
-  (forward 
-    (reduce (fn [nn outputs] (println nn) (layer (forward nn) outputs)) 
-          (layer inputs (first layer-sizes)) 
-          (rest layer-sizes))))
-
+  [input-size layer-sizes]
+  (println(cons input-size layer-sizes) (partition 2 1 (cons input-size layer-sizes)))
+  (->MLP (map (fn [[i o]] (layer i o)) 
+              (partition 2 1 (cons input-size layer-sizes)))))
 

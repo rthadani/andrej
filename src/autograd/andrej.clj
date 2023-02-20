@@ -6,7 +6,7 @@
             [aerial.hanami.templates :as ht]
             [aerial.hanami.core :as hmi]
             [dorothy.core :as dot]
-            [autograd.ops :refer [value + * tanh backward gradient set-gradient ] :as ops]
+            [autograd.ops :refer [value + * - ** tanh backward gradient set-gradient ] :as ops]
             [clojure.java.io :as io]
             [fastmath.core :as math])
    (:import [javax.imageio ImageIO]))
@@ -197,11 +197,35 @@
 ^::clerk/no-cache (ImageIO/read  (io/file "out5.png"))
 
 
-(:data (ops/activate (ops/neuron [2.0 3.0])))
+(backward (ops/activate (ops/neuron 2) [2.0 3.0]))
 
-(map :data (ops/forward (ops/layer [2.0 3.0] 3)))
+(map :data (ops/forward (ops/layer 2 3) [2.0 3.0]))
 
+(def n (ops/mlp 3 [4 4 1]))
 ^::clerk/no-cache
-(def mlp-nn (ops/mlp [2.0 3.0 -1.0] [4 4 1]))
+(def mlp-nn (ops/forward n [2.0 3.0 -1.0] ))
 ^::clerk/no-cache (draw-dot mlp-nn "out6.png")
 ^::clerk/no-cache (ImageIO/read  (io/file "out6.png"))
+
+;;train a neural network
+(def n (ops/mlp 3 [4 4 1]))
+(def xs [[2.0 3.0 -1.0]
+         [3.0 -1.0 0.5]
+         [0.5 1.0 1.0]
+         [1.0 1.0 -1.0]])
+(def ys [1.0 -1.0 -1.0 1.0])
+(def iterations 20)
+(doseq [k (range iterations)
+        :let [n (ops/update-parameters n -0.1)
+              _ (map #(set-gradient % 0.0) (ops/parameters n))
+              ypred (map #(ops/forward n %) xs)
+              _ (println (map :data ypred))
+              loss (reduce + (map (fn [p s] (** (- p s) 2)) ypred ys)) 
+              _ (set-gradient loss 1.0)
+              loss (:data (backward loss))]]
+  (println "iteration:" k ", loss:" loss, "ypred: " (map :data ypred)))
+
+(def test-neuron (ops/neuron 1))
+(ops/backward (set-gradient (ops/activate test-neuron [-1.0]) 1.0))
+(def test-neuron (ops/update-parameters test-neuron -0.1))
+

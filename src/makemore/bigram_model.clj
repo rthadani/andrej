@@ -162,6 +162,15 @@
 ;;Now the fun part do it with a NN
 ;;The neural network will adjust the weight for the next char so that the mle is high
 
+; xenc * W for emma 
+; (5,27) mm (27, 27) -> (5,27)
+
+; The  27 outputs are positive and negative numbers but they should be probabilities for the next character in the sequence
+; - Need to interpret the 27 numbers so they represent probabilities.
+; We need like what we had in the original table(see heatmap) each row had counts we normalized them to probabilities and the
+; probabilities normalized to one. They cant be counts because counts are integers 
+; the 27 outputs are logs to get the counts we need to exponentiate them e^x
+
 (defn make-tensors
   [words]
   (let [tr (fn
@@ -178,7 +187,7 @@
       logits (torch/mm xenc W) ;predict log counts
       counts (py. logits exp)  ;counts equivalent to N
       probs (py. counts __div__ (py. counts sum 1 :keepdims true)) ;probability for next char  the last two lines are calles a softmax
-      loss (py.. (py/get-item probs [(torch/arange 5) ys]) log mean __neg__)] 
+      loss (py.. (py/get-item probs [(torch/arange 5) ys]) log mean __neg__)] ; using arange gives us the the indexes of xs along with ys to pick from for the output prob. 
   (println (py. loss item))
   (println (py. (py/get-item probs [0]) sum))
   (println (py.- probs shape))

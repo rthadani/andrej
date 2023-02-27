@@ -1,11 +1,11 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
         scicloj/scicloj.ml {:mvn/version "0.2.0"}
-        ;scicloj/tablecloth {:mvn/version "6.103"}
+        scicloj/tablecloth {:mvn/version "7.000-beta-27"}
         io.github.nextjournal/clerk {:mvn/version "0.12.707"}
         aerial.hanami {:mvn/version "0.15.1"}
         dorothy/dorothy {:mvn/version "0.0.6"}
-        }
+        clj-python/libpython-clj {:mvn/version "2.024"} }
  :aliases
  {:build {:deps {io.github.seancorfield/build-clj
                  {:git/tag "v0.8.2" :git/sha "0ffdb4c"}}

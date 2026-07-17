@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [+ * - /])
   (:require [fastmath.random :as frandom]))
 
-(defprotocol Ops 
+(defprotocol Ops
   (+ [v1 v2])
   (* [v1 v2])
   (tanh [v])
@@ -13,7 +13,7 @@
   (gradient [v])
   (set-gradient [_ g]))
 
-(declare value)
+(declare value build-topo backward-step)
 
 (defrecord Value
   [data children op label grad exp]
@@ -37,32 +37,14 @@
       (->Value t [this] "tanh" label (atom 0.0) 0.0)))
 
   (backward [this]
-    (cond 
-      (= op "+") 
-      (let [[v1 v2] children
-            _ (swap! (:grad v1) + (* 1.0 @grad))
-            child1 (backward v1)
-            _ (swap! (:grad v2) + (* 1.0 @grad))
-            child2 (backward v2)]
-        (assoc this :children [child1 child2]))
-      (= op "*") 
-      (let [[v1 v2] children
-            _ (swap! (:grad v1) + (* (:data v2) @grad))
-            child1 (backward v1)
-            _ (swap! (:grad v2) + (* (:data v1) @grad))
-            child2 (backward v2) ]
-        (assoc this :children [child1 child2]))
-      (= op "tanh")
-      (do (swap! (:grad (first children)) + (- 1 (Math/pow data 2)))
-          (assoc this :children [(backward (first children))]))
-      (= op "**")
-      (do 
-        (swap! (:grad (first children)) + (* (* exp (** data (dec exp))) @grad)) 
-        (assoc this :children [(backward (first children))]))
-      :else this))
+    (let [topo (build-topo this)]
+      (doseq [node (reverse topo)]
+        (backward-step node))
+      this))
+
   (gradient [_]
     @grad)
-  (set-gradient [this g] 
+  (set-gradient [this g]
     (reset! grad g)
     this))
 
@@ -74,9 +56,39 @@
   ([data label grad]
    (value data [] "" label grad))
   ([data children op label grad]
-    (if (= ( type data) Value) 
-      data 
+    (if (= (type data) Value)
+      data
       (->Value data children op label (atom grad) 0.0))))
+
+(defn- build-topo
+  "Returns nodes in topological order (leaves first, root last)."
+  [root]
+  (letfn [(visit [node [visited topo]]
+            (if (contains? visited node)
+              [visited topo]
+              (let [visited' (conj visited node)
+                    [visited'' topo'] (reduce (fn [acc child] (visit child acc))
+                                              [visited' topo]
+                                              (:children node))]
+                [visited'' (conj topo' node)])))]
+    (second (visit root [#{} []]))))
+
+(defn- backward-step
+  "Propagates gradient one step from node to its children."
+  [node]
+  (let [{:keys [op children data grad exp]} node]
+    (case op
+      "+" (let [[v1 v2] children]
+            (swap! (:grad v1) clojure.core/+ @grad)
+            (swap! (:grad v2) clojure.core/+ @grad))
+      "*" (let [[v1 v2] children]
+            (swap! (:grad v1) clojure.core/+ (clojure.core/* (:data v2) @grad))
+            (swap! (:grad v2) clojure.core/+ (clojure.core/* (:data v1) @grad)))
+      "tanh" (let [[v] children]
+               (swap! (:grad v) clojure.core/+ (clojure.core/* (clojure.core/- 1.0 (clojure.core/* data data)) @grad)))
+      "**" (let [[v] children]
+             (swap! (:grad v) clojure.core/+ (clojure.core/* (clojure.core/* exp (Math/pow (:data v) (dec exp))) @grad)))
+      nil)))
 
 (extend-type Number
   Ops
@@ -84,15 +96,23 @@
   (* [this other] (if (= (type other) Value) (* (value this) other) (clojure.core/* this other)))
   (** [this x] (Math/pow this x))
   (- [this other] (if (= (type other) Value) (- (value this) other) (clojure.core/- this other)))
-  (/ [this other] (if (= (type other) Value) (/ (value this) other) (clojure.core// this other))))
+  (/ [this other] (if (= (type other) Value) (/ (value this) other) (clojure.core// this other)))
+  (tanh [this] (tanh (value this)))
+  (backward [this] this)
+  (gradient [_] 0.0)
+  (set-gradient [this _] this))
 
 (extend-type Double
   Ops
   (+ [this other] (if (= (type other) Value) (+ (value this) other) (clojure.core/+ this other)))
   (* [this other] (if (= (type other) Value) (* (value this) other) (clojure.core/* this other)))
   (** [this x] (Math/pow this x))
-  (- [this other] (if (= (type other) Value) (- (value this) other) (clojure.core/- this other))) 
-  (/ [this other] (if (= (type other) Value) (/ (value this) other) (clojure.core// this other))))
+  (- [this other] (if (= (type other) Value) (- (value this) other) (clojure.core/- this other)))
+  (/ [this other] (if (= (type other) Value) (/ (value this) other) (clojure.core// this other)))
+  (tanh [this] (tanh (value this)))
+  (backward [this] this)
+  (gradient [_] 0.0)
+  (set-gradient [this _] this))
 
 (defprotocol Parameters
   (parameters [_])
@@ -108,15 +128,16 @@
       (tanh (reduce + bias weighted-inputs))))
   Parameters
   (parameters [_]
-    (conj weights bias))
+    (conj (vec weights) bias))
   (update-parameters [_ step]
-    (->Neuron (map  #(update % :data clojure.core/+ (clojure.core/* step @(:grad %))) weights) (update bias :data  + (* step @(:grad bias))))))
+    (->Neuron (mapv #(update % :data clojure.core/+ (clojure.core/* step @(:grad %))) weights)
+              (update bias :data clojure.core/+ (clojure.core/* step @(:grad bias))))))
 
 (defn neuron
   [num-inputs]
-  (let [weights (map (fn [_] (frandom/frand -1.0 1.0)) (range num-inputs)) 
-        bias (frandom/frand -1.0 1.0)]
-    (->Neuron (map value weights) (value bias))))
+  (let [weights (mapv (fn [_] (value (frandom/frand -1.0 1.0))) (range num-inputs))
+        bias    (value (frandom/frand -1.0 1.0))]
+    (->Neuron weights bias)))
 
 (defprotocol LayerOps
   (forward [_ inputs]))
@@ -125,36 +146,35 @@
   [neurons num-outputs]
   LayerOps
   (forward [_ inputs]
-    (let [output (map #(activate % inputs) neurons)]
-     (if (= 1 num-outputs)
-       (first output)
-       output)))
+    (let [output (mapv #(activate % inputs) neurons)]
+      (if (= 1 num-outputs)
+        (first output)
+        output)))
   Parameters
   (parameters [_]
     (mapcat parameters neurons))
   (update-parameters [_ step]
-    (->Layer (map #(update-parameters % step) neurons) num-outputs)))
+    (->Layer (mapv #(update-parameters % step) neurons) num-outputs)))
 
 (defn layer
   [num-inputs num-outputs]
-  (->Layer (for [_ (range num-outputs)] (neuron num-inputs)) num-outputs))
+  (->Layer (mapv (fn [_] (neuron num-inputs)) (range num-outputs)) num-outputs))
 
 (defrecord MLP [layers]
   LayerOps
   (forward [_ inputs]
-    (reduce (fn [nn layer] 
-              (forward layer nn)) 
-          inputs 
-          layers))
+    (reduce (fn [acts layer]
+              (forward layer acts))
+            inputs
+            layers))
   Parameters
   (parameters [_]
-     (mapcat parameters layers))
+    (mapcat parameters layers))
   (update-parameters [_ step]
-     (->MLP (map #(update-parameters % step) layers))))
+    (->MLP (mapv #(update-parameters % step) layers))))
 
 (defn mlp
   [input-size layer-sizes]
-  (println(cons input-size layer-sizes) (partition 2 1 (cons input-size layer-sizes)))
-  (->MLP (map (fn [[i o]] (layer i o)) 
-              (partition 2 1 (cons input-size layer-sizes)))))
-
+  (println (cons input-size layer-sizes) (partition 2 1 (cons input-size layer-sizes)))
+  (->MLP (mapv (fn [[i o]] (layer i o))
+               (partition 2 1 (cons input-size layer-sizes)))))

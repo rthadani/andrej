@@ -1,11 +1,13 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        scicloj/scicloj.ml {:mvn/version "0.2.0"}
-        scicloj/tablecloth {:mvn/version "7.000-beta-27"}
-        io.github.nextjournal/clerk {:mvn/version "0.12.707"}
+        ;scicloj/scicloj.ml {:mvn/version "0.2.2"}
+        scicloj/tablecloth {:mvn/version "7.042"}
+        io.github.nextjournal/clerk {:mvn/version "0.14.919"}
         aerial.hanami {:mvn/version "0.15.1"}
         dorothy/dorothy {:mvn/version "0.0.6"}
-        clj-python/libpython-clj {:mvn/version "2.024"} }
+        io.github.rthadani/clj-pytorch #_{:mvn/version "0.5.0"} {:git/url "https://github.com/rthadani/clj-pytorch"
+                                                                 :git/sha "3103f6b20b75393a5355c1482080b9260049a40c"}
+        generateme/fastmath {:mvn/version "2.2.1"}}
  :aliases
  {:build {:deps {io.github.seancorfield/build-clj
                  {:git/tag "v0.8.2" :git/sha "0ffdb4c"}}

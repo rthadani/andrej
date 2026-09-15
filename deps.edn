@@ -5,8 +5,8 @@
         io.github.nextjournal/clerk {:mvn/version "0.14.919"}
         aerial.hanami {:mvn/version "0.15.1"}
         dorothy/dorothy {:mvn/version "0.0.6"}
-        io.github.rthadani/clj-pytorch #_{:mvn/version "0.5.0"} {:git/url "https://github.com/rthadani/clj-pytorch"
-                                                                 :git/sha "3103f6b20b75393a5355c1482080b9260049a40c"}
+        io.github.rthadani/clj-pytorch {:mvn/version "0.8.1"} #_{:git/url "https://github.com/rthadani/clj-pytorch"
+                                                                 :git/sha "720037191a69957f5c47bf256dcdd3c099b06f83"}
         generateme/fastmath {:mvn/version "2.2.1"}}
  :aliases
  {:build {:deps {io.github.seancorfield/build-clj

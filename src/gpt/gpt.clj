@@ -201,7 +201,7 @@
   (train m)
   (def context (t/zeros [1 1] :dtype t/long :device device))
   (decode (-> m
-              (generate context 500)
+              (generate context 10000)
               (t/select 0 0) ;generate[0]
               tensor/->clj))
 

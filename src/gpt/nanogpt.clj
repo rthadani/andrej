@@ -8,9 +8,6 @@
             [clj-pytorch.context   :as ctx]
             [libpython-clj2.python :as py :refer [py.- py.]]))
 
-;;; ---------------------------------------------------------------------------
-;;; Config
-
 (defn make-config
   [& {:keys [sequence-len vocab-size n-layer n-head n-kv-head n-embd]
       :or   {sequence-len 2048
@@ -27,9 +24,6 @@
    :n-embd       n-embd})
 
 (def device (tensor/best-device))
-
-;;; ---------------------------------------------------------------------------
-;;; Utilities
 
 (defn norm
   "RMSNorm with no learnable parameters."
@@ -61,9 +55,6 @@
         cos (-> (t/cos fq) (t/unsqueeze 0) (t/unsqueeze 2))
         sin (-> (t/sin fq) (t/unsqueeze 0) (t/unsqueeze 2))]
     [cos sin]))
-
-;;; ---------------------------------------------------------------------------
-;;; CausalSelfAttention
 
 (defmodule CausalSelfAttention
   [cfg layer-idx]
@@ -104,9 +95,6 @@
                    y        (t/view (t/contiguous (t/transpose y 1 2)) [B T -1])]
                ((nn/get-layer self :c-proj) y))))
 
-;;; ---------------------------------------------------------------------------
-;;; MLP
-
 (defmodule MLP [cfg]
   :layers {:c-fc   (nn/linear (:n-embd cfg) (* 4 (:n-embd cfg)) :bias false :device device)
            :c-proj (nn/linear (* 4 (:n-embd cfg)) (:n-embd cfg) :bias false :device device)}
@@ -117,9 +105,6 @@
                  (t/square)
                  ((nn/get-layer self :c-proj)))))
 
-;;; ---------------------------------------------------------------------------
-;;; Block
-
 (defmodule Block [cfg layer-idx]
   :layers {:attn (CausalSelfAttention cfg layer-idx)
            :mlp  (MLP cfg)}
@@ -127,9 +112,6 @@
              (let [x (t/add x ((nn/get-layer self :attn) (norm x) ve cos sin))
                    x (t/add x ((nn/get-layer self :mlp)  (norm x)))]
                x)))
-
-;;; ---------------------------------------------------------------------------
-;;; GPT
 
 (defmodule GPT [cfg]
   :layers (let [{:keys [vocab-size n-embd n-layer n-head n-kv-head]} cfg
@@ -209,9 +191,6 @@
                    [logits loss])
                  [logits nil]))))
 
-;;; ---------------------------------------------------------------------------
-;;; Training
-
 (defn train
   [m max-iters get-batch
    & {:keys [learning-rate eval-interval eval-iters]
@@ -225,9 +204,6 @@
         (optim/zero-grad! optimizer)
         (optim/backward! loss)
         (optim/step! optimizer)))))
-
-;;; ---------------------------------------------------------------------------
-;;; Generation
 
 (defn generate
   [m tokens max-tokens

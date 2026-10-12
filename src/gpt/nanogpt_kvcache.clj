@@ -1,6 +1,5 @@
 (ns gpt.nanogpt-kvcache
-  "nanochat GPT: RoPE, QK-norm, ReLU2, GQA, value embeddings, smear, backout.
-   Uses SDPA in place of Flash Attention 3. No KV-cache or sliding window."
+  "NanoGPT with KV-cache"
   (:require [clj-pytorch.tensor    :as tensor]
             [clj-pytorch.functional :as t]
             [clj-pytorch.nn        :refer [defmodule] :as nn]

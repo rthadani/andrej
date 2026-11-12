@@ -1,8 +1,10 @@
 (ns makemore.bigram-model
   (:require [clojure.string :as str]
-            [libpython-clj2.require :refer [require-python]]
-            [libpython-clj2.python :refer [py. py.. py.-] :as py]
-            [libpython-clj2.python.ffi :as py-ffi]
+            [libpython-clj2.python :refer [py. py.-] :as py]
+            [clj-pytorch.functional :as t]
+            [clj-pytorch.tensor :as tensor]
+            [clj-pytorch.nn :refer [defmodule] :as nn]
+            [clj-pytorch.optimizer :as optim]
             [nextjournal.clerk :as clerk]
             [aerial.hanami.common :as hc]
             [aerial.hanami.templates :as ht]))
@@ -10,10 +12,6 @@
 #_(clerk/serve! 
   {:watch-paths ["src/makemore"]
    :browse? true})
-
-(require-python 'torch)
-(require-python 'builtins)
-(def F (py.- torch/nn functional))
 
 (def words 
   (-> (slurp "resources/names.txt")
@@ -39,32 +37,30 @@
     (sort-by #(- (second %)))
     (take 5))
 
-(def a (torch/zeros [3 5] :dtype torch/int32))
-(py. (py/get-item a [1 3]) __iadd__ 1)
-
-(def N (torch/zeros [27 27] :dtype torch/int32))
 (def characters (->> words (str/join "") set sort))
 (def stoi  (into {} (-> (map-indexed (fn [i c] [c (inc i)]) characters) 
                         (conj [\. 0]))))
 (def itos (->> stoi (map (fn [[k v]] [v k])) (into {})))
 
-(defn populate-tensor! [N]
-  (doseq [[r c] (into [] bigram-transform words)]
-    (py. (py/get-item N [(stoi r) (stoi c)]) __iadd__ 1)))
+;; no in-place indexed add in clj-pytorch, so count in clojure and build the tensor once
+(defn make-counts []
+  (let [freqs (frequencies (into [] bigram-transform words))]
+    (t/tensor (vec (for [i (range 27)]
+                     (vec (for [j (range 27)] (get freqs [(itos i) (itos j)] 0)))))
+              :dtype t/int64)))
 
-(populate-tensor! N)
-(py/get-item N [3 3])
+(def N (make-counts))
+(t/tensor-get N 3 3)
 
 (defn chart-data 
   [N] 
   (for [i (range 27) j (range 27) ]
-    {:text (str (itos i) (itos j) " " (py. (py/get-item N [i j]) item))
+    {:text (str (itos i) (itos j) " " (t/tensor-get N i j))
      :x j
      :y i
-     :color (py. (py/get-item N [i j]) item)}))
+     :color (t/tensor-get N i j)}))
 
-(let [a (torch/zeros [27 27] :dtype torch/int32)
-       _ (populate-tensor! a)]
+(let [a N]
  (clerk/vl 
   {:nextjournal.clerk/width :full} 
   (-> 
@@ -83,49 +79,46 @@
     (assoc-in [:layer 1 :encoding :text :field] :text)
     (assoc-in [:layer 1 :encoding :text :type] "nominal") )))
 
-(py/get-item N [(builtins/slice 0 1) ])
+(t/slice N [[0 1]])
 
 (defn make-p
   [ix]
-  (as-> (py/get-item N [ix]) $ 
-           (py. $ __div__ (py. $ sum) )))
+  (let [row (t/select N 0 ix)]
+    (t/div row (t/sum row))))
 
-(def g (py. (torch/Generator) manual_seed 2147483647))
-(def p (make-p 0))
+;; clj-pytorch has no torch.Generator, so seed the global generator instead
+(defn get-ix [p]
+  (t/item (t/multinomial p 1 :replacement true)))
 
-(defn get-ix [p g]
-  (py. (torch/multinomial p :num_samples 1 :replacement true :generator g) item))
-
+(t/manual-seed 2147483647)
 (loop [i 50
-       g (py. (torch/Generator) manual_seed 2147483647)
-       ix (get-ix (make-p 0) g)
+       ix (get-ix (make-p 0))
        current ""
        out []]
   (if (zero? i)
     out
     (if (zero? ix) 
-      (recur (dec i) g (get-ix (make-p 0) g) "" (conj out current))
-      (recur i g (get-ix (make-p ix) g) (str current (itos ix)) out))))
+      (recur (dec i) (get-ix (make-p 0)) "" (conj out current))
+      (recur i (get-ix (make-p ix)) (str current (itos ix)) out))))
 
 ;;optimized
 ;;check broadcast optimization
-(py.- (py.. N float (sum 1 :keepdim true)) shape)
+(t/shape (t/sum (tensor/->float N) 1 true))
 ;;add 1 for model smoothing so that you dont get the loss as inf for bigrams that dont occur.
-(def P (as-> (py. N float) $
-              (py. $ __add__ 1)
-              (py. $ __div__ (py. $ sum 1 :keepdim true))))
-(py. (py/get-item P [0]) sum)
+(def P (let [smoothed (t/add (tensor/->float N) 1)]
+         (t/div smoothed (t/sum smoothed 1 true))))
+(t/sum (t/select P 0 0))
 
+(t/manual-seed 2147483647)
 (loop [i 50
-       g (py. (torch/Generator) manual_seed 2147483647)
-       ix (get-ix (py/get-item P [0]) g)
+       ix (get-ix (t/select P 0 0))
        current ""
        out []]
   (if (zero? i)
     out
     (if (zero? ix) 
-      (recur (dec i) g (get-ix (py/get-item P [0]) g) "" (conj out current))
-      (recur i g (get-ix (py/get-item P [ix]) g) (str current (itos ix)) out))))
+      (recur (dec i) (get-ix (t/select P 0 0)) "" (conj out current))
+      (recur i (get-ix (t/select P 0 ix)) (str current (itos ix)) out))))
 
 ;; - quality of the model 
 ;; - GOAL: Maximize liklihood of the data w.r.t model parameters (statistical modeling)
@@ -141,8 +134,7 @@
        (reduce (fn [[log-likelihood cnt] [ch1 ch2]]
                  (let [ix1 (stoi ch1)
                        ix2 (stoi ch2)
-                       prob (py/get-item P [ix1 ix2])
-                       logprob (py. (torch/log prob) item)]
+                       logprob (t/item (t/log (t/select (t/select P 0 ix1) 0 ix2)))]
                    (println (str ch1 ch2) logprob)
                    [(+ log-likelihood logprob) (inc cnt)])) [0.0 0])))
 
@@ -178,60 +170,73 @@
              ([result] result) 
              ([[xs ys] [ch1 ch2]] [(conj xs (stoi ch1)) (conj ys (stoi ch2))]))
         [xs ys] (transduce bigram-transform tr [[] []] words)]
-    [(torch/tensor xs) (torch/tensor ys)]))
+    [(t/tensor xs) (t/tensor ys)]))
+
+;; no one_hot in clj-pytorch
+(defn one-hot [xs n]
+  (tensor/->float (t/eq (t/unsqueeze xs 1) (t/arange n))))
+
+(defn neg-log-likelihood [probs ys]
+  (t/neg (t/mean (t/log (t/gather probs 1 (t/unsqueeze ys 1))))))
 
 (let [[xs ys] (make-tensors [(first words)])
-      g (py. (torch/Generator) manual_seed 2147483647) ;randomly initialize 27 neurons each neuron receives 27 inputs
-      W (torch/randn [27 27] :generator g :requires_grad true)
-      xenc (py.. F (one_hot xs :num_classes 27) float) ;input to one hot network
-      logits (torch/mm xenc W) ;predict log counts
-      counts (py. logits exp)  ;counts equivalent to N
-      probs (py. counts __div__ (py. counts sum 1 :keepdims true)) ;probability for next char  the last two lines are calles a softmax
-      loss (py.. (py/get-item probs [(torch/arange 5) ys]) log mean __neg__)] ; using arange gives us the the indexes of xs along with ys to pick from for the output prob. 
-  (println (py. loss item))
-  (println (py. (py/get-item probs [0]) sum))
-  (println (py.- probs shape))
+      _ (t/manual-seed 2147483647)
+      W (tensor/requires-grad! (t/randn [27 27]) true) ;randomly initialize 27 neurons each neuron receives 27 inputs
+      xenc (one-hot xs 27) ;input to one hot network
+      logits (t/matmul xenc W) ;predict log counts
+      counts (t/exp logits)  ;counts equivalent to N
+      probs (t/div counts (t/sum counts 1 true)) ;probability for next char  the last two lines are calles a softmax
+      loss (neg-log-likelihood probs ys)] ; gather picks the prob of the actual next char for each row (the arange indexing in the video)
+  (println (t/item loss))
+  (println (t/sum (t/select probs 0 0)))
+  (println (t/shape probs))
   (py/set-attr! W 'grad nil)
-  (py. loss backward)
+  (optim/backward! loss)
   (println (py.- W grad)))
 
 
+(defmodule BigramNN []
+  :init (fn [self] (nn/register-parameter! self :W (t/randn [27 27]))) ;randomly initialize 27 neurons each neuron receives 27 inputs
+  :forward (fn [self xenc] (t/matmul xenc (py/get-attr self "W"))))
+
+(defn weights [model] (py/get-attr (.py-module model) "W"))
+
+;; wrapping W in a module lets the optimizer do the update and grad zeroing
+;; the 0.01 * mean(W^2) term in the loss is the regularization for smoothing
 (defn train 
   [words iterations gradient-step]
   (let [[xs ys] (make-tensors words)
-        g (py. (torch/Generator) manual_seed 2147483647) ;randomly initialize 27 neurons each neuron receives 27 inputs
-        W (torch/randn [27 27] :generator g :requires_grad true)
-        xenc (py.. F (one_hot xs :num_classes 27) float)
-        num (py. xs nelement)] 
-    (loop [k iterations
-           W W]
-      (if (zero? k)
-        W
-        (let [logits (torch/mm xenc W)
-              counts (py. logits exp)  
-              probs (py. counts __div__ (py. counts sum 1 :keepdims true))
-              loss (py.. (py/get-item probs [(torch/arange num) ys]) log mean __neg__)]
-          (println (py. loss item))
-          (py. loss backward)
-          (py. (py.- W data) __iadd__ (py.. (py.- W grad) (__mul__ gradient-step) __neg__ (__add__ (py.. W (__pow__ 2) (__mul__ 0.01) mean)))) ;regularization for smoothing
-          (py. (py.- W grad) zero_)
-          (recur (dec k) W))))))
+        _ (t/manual-seed 2147483647)
+        model (BigramNN)
+        opt (optim/sgd model :lr gradient-step :momentum 0)
+        xenc (one-hot xs 27)] 
+    (dotimes [_ iterations]
+      (let [logits (nn/call model xenc)
+            counts (t/exp logits)  
+            probs (t/div counts (t/sum counts 1 true))
+            loss (t/add (neg-log-likelihood probs ys)
+                        (t/mean (t/mul (t/pow (weights model) 2) 0.01)))]
+        (println (t/item loss))
+        (optim/zero-grad! opt)
+        (optim/backward! loss)
+        (optim/step! opt)))
+    (weights model)))
 
 (train [(first words)] 10 0.1)
 (def W (train words 100 50))
 
+(t/manual-seed 2147483647)
 (loop [i 50
-       g (py. (torch/Generator) manual_seed 2147483647)
        ix 0
        current ""
        out []]
-  (let [xenc (py.. F (one_hot (torch/tensor [ix]) :num_classes 27) float)         
-        logits (torch/mm xenc W)         
-        counts (py. logits exp) 
-        p (py. counts __div__ (py. counts sum 1 :keepdims true))
-        ix (get-ix p g)]
+  (let [xenc (one-hot (t/tensor [ix]) 27)
+        logits (t/matmul xenc W)         
+        counts (t/exp logits) 
+        p (t/div counts (t/sum counts 1 true))
+        ix (get-ix p)]
     (if (zero? i)
       out
       (if (zero? ix) 
-        (recur (dec i) g 0 "" (conj out current))
-        (recur i g ix (str current (itos ix)) out)))))
+        (recur (dec i) 0 "" (conj out current))
+        (recur i ix (str current (itos ix)) out)))))

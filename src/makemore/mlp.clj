@@ -1,8 +1,7 @@
 (ns makemore.mlp
   (:require [clojure.string :as str]
-            [libpython-clj2.require :refer [require-python]]
-            [libpython-clj2.python :refer [py. py.. py.-] :as py]
-            [libpython-clj2.python.ffi :as py-ffi]
+            [clj-pytorch.functional :as t]
+            [clj-pytorch.tensor :as tensor]
             [nextjournal.clerk :as clerk]
             [aerial.hanami.common :as hc]
             [aerial.hanami.templates :as ht]))
@@ -10,10 +9,6 @@
 #_(clerk/serve! 
   {:watch-paths ["src/makemore"]
    :browse? true})
-
-(require-python 'torch)
-(require-python 'builtins)
-(def F (py.- torch/nn functional))
 
 (def words 
   (-> (slurp "resources/names.txt")
@@ -55,36 +50,35 @@
              ([result] result) 
              ([[xs ys] [chars ch2]]  [(conj xs (map #(stoi %) chars)) (conj ys (stoi ch2))]))
         [xs ys] (transduce (block-transform block-size) tr [[] []] words)]
-    [(torch/tensor xs) (torch/tensor ys)]))
+    [(t/tensor xs) (t/tensor ys)]))
 
 (let [[X Y] (make-tensors 3 (take 5 words))
-      C (torch/randn [27 2])
-      emb (py/get-item C [X])
-      W1 (torch/randn [6 100])
-      b1 (torch/randn [100])
-      h (-> (torch/mm (py. emb view -1 6) W1) (py. __add__ b1) (torch/tanh))
-      W2 (torch/randn [100 27])
-      b2 (torch/randn 27)
-      logits (-> (torch/mm h W2) (py. __add__ b2))
-      #_#_counts (py. logits exp)
-      #_#_prob (py. counts __div__ (py. counts sum 1 :keepdims true))
-      #_#_loss (py.. (py/get-item prob [(torch/arange 32) Y]) log mean __neg__)
-      loss (py. F cross_entropy logits Y)
+      C (t/randn [27 2])
+      emb (-> (t/index-select C 0 (t/view X [-1])) (t/view (conj (t/shape X) 2)))
+      W1 (t/randn [6 100])
+      b1 (t/randn [100])
+      h (-> (t/matmul (t/view emb [-1 6]) W1) (t/add b1) (t/tanh-f))
+      W2 (t/randn [100 27])
+      b2 (t/randn [27])
+      logits (t/add (t/matmul h W2) b2)
+      #_#_counts (t/exp logits)
+      #_#_prob (t/div counts (t/sum counts 1 true))
+      #_#_loss (t/neg (t/mean (t/log (t/gather prob 1 (t/unsqueeze Y 1)))))
+      loss (t/cross-entropy-f logits Y)
       parameters [C W1 b1 W2 b2]] ;More efficient to do this instead since no intermediate tensors created and uses clustered operations and backward pass is efficient since it uses "fused kernel" operations to calculate the derivative using previously saved values. Numerically well behaved. For very large value exp for logits will be inf 
-  (println (py.- X shape) (py.- X dtype) (py.- Y shape) (py.- Y dtype))
+  (println (t/shape X) (t/dtype X) (t/shape Y) (t/dtype Y))
   #_(println X) 
   #_(println Y)
-  (println (py.- emb shape))
-  (println (py/get-item X [13 2]))
-  (println (py/get-item (py/get-item C [X]) [13 2]))
-  (println (py/get-item C [1]))
-  (println (-> (torch/unbind emb 1) (torch/cat 1) (py.- shape)))
-  (println (py.- h shape))
-  (println (py.- logits shape))
+  (println (t/shape emb))
+  (println (t/tensor-get X 13 2))
+  (println (t/select (t/select emb 0 13) 0 2))
+  (println (t/select C 0 1))
+  (println (-> (t/cat (map #(t/select emb 1 %) (range (nth (t/shape emb) 1))) :dim 1) t/shape))
+  (println (t/shape h))
+  (println (t/shape logits))
   #_(println logits)
-  #_(println (py.- prob shape))
-  #_(println (py. (py/get-item prob [0]) sum))
+  #_(println (t/shape prob))
+  #_(println (t/sum (t/select prob 0 0)))
   #_(println loss torch-loss)
   (println loss)
-  (println (apply + (map #(py. % nelement) parameters))))
-
+  (println (apply + (map t/numel parameters))))

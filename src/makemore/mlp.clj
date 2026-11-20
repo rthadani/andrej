@@ -2,13 +2,11 @@
   (:require [clojure.string :as str]
             [clj-pytorch.functional :as t]
             [clj-pytorch.tensor :as tensor]
-            [nextjournal.clerk :as clerk]
-            [aerial.hanami.common :as hc]
-            [aerial.hanami.templates :as ht]))
+            [scicloj.clay.v2.api :as clay]
+            [scicloj.tableplot.v1.plotly :as plotly]
+            [tablecloth.api :as tc]))
 
-#_(clerk/serve! 
-  {:watch-paths ["src/makemore"]
-   :browse? true})
+#_(clay/make! {:source-path "src/makemore/mlp.clj"})
 
 (def words 
   (-> (slurp "resources/names.txt")

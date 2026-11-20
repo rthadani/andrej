@@ -5,13 +5,11 @@
             [clj-pytorch.tensor :as tensor]
             [clj-pytorch.nn :refer [defmodule] :as nn]
             [clj-pytorch.optimizer :as optim]
-            [nextjournal.clerk :as clerk]
-            [aerial.hanami.common :as hc]
-            [aerial.hanami.templates :as ht]))
+            [scicloj.clay.v2.api :as clay]
+            [scicloj.tableplot.v1.plotly :as plotly]
+            [tablecloth.api :as tc]))
 
-#_(clerk/serve! 
-  {:watch-paths ["src/makemore"]
-   :browse? true})
+#_(clay/make! {:source-path "src/makemore/bigram_model.clj"})
 
 (def words 
   (-> (slurp "resources/names.txt")
@@ -60,24 +58,13 @@
      :y i
      :color (t/tensor-get N i j)}))
 
-(let [a N]
- (clerk/vl 
-  {:nextjournal.clerk/width :full} 
-  (-> 
-    (hc/xform 
-    ht/corr-heatmap
-    {:DATA (chart-data a)
-     :WIDTH 1600
-     :HEIGHT 1600 
-     :COLS [:x :y]
-     :COL1 :x :XTYPE "quantitative"
-     :COL2 :y :YTYPE "quantitative"
-     :CORR :color 
-     :TXT :text 
-     :TTYPE "nominal"
-     :TEST "datum['color'] > 4000"})
-    (assoc-in [:layer 1 :encoding :text :field] :text)
-    (assoc-in [:layer 1 :encoding :text :type] "nominal") )))
+(-> (tc/dataset (chart-data N))
+    (plotly/base {:=x :x :=y :y :=z :color :=width 1000 :=height 1000
+                  :=colorscale "Blues"})
+    (plotly/layer-heatmap {:=text :text})
+    (plotly/plot)
+    (assoc-in [:layout :yaxis :autorange] "reversed")
+    (assoc-in [:data 0 :texttemplate] "%{text}"))
 
 (t/slice N [[0 1]])
 
@@ -86,20 +73,26 @@
   (let [row (t/select N 0 ix)]
     (t/div row (t/sum row))))
 
-;; clj-pytorch has no torch.Generator, so seed the global generator instead
-(defn get-ix [p]
-  (t/item (t/multinomial p 1 :replacement true)))
+;; clj-pytorch has no torch.Generator, so these go through interop
+(def torch (py/import-module "torch"))
 
-(t/manual-seed 2147483647)
+(defn make-generator []
+  (py. (py/call-attr torch "Generator") manual_seed 2147483647))
+
+(defn get-ix [p g]
+  (t/item (py/call-attr-kw torch "multinomial" [p 1] {"replacement" true "generator" g})))
+
+^:kind/pprint
 (loop [i 50
-       ix (get-ix (make-p 0))
+       g (make-generator)
+       ix (get-ix (make-p 0) g)
        current ""
        out []]
   (if (zero? i)
     out
     (if (zero? ix) 
-      (recur (dec i) (get-ix (make-p 0)) "" (conj out current))
-      (recur i (get-ix (make-p ix)) (str current (itos ix)) out))))
+      (recur (dec i) g (get-ix (make-p 0) g) "" (conj out current))
+      (recur i g (get-ix (make-p ix) g) (str current (itos ix)) out))))
 
 ;;optimized
 ;;check broadcast optimization
@@ -109,16 +102,17 @@
          (t/div smoothed (t/sum smoothed 1 true))))
 (t/sum (t/select P 0 0))
 
-(t/manual-seed 2147483647)
+^:kind/pprint
 (loop [i 50
-       ix (get-ix (t/select P 0 0))
+       g (make-generator)
+       ix (get-ix (t/select P 0 0) g)
        current ""
        out []]
   (if (zero? i)
     out
     (if (zero? ix) 
-      (recur (dec i) (get-ix (t/select P 0 0)) "" (conj out current))
-      (recur i (get-ix (t/select P 0 ix)) (str current (itos ix)) out))))
+      (recur (dec i) g (get-ix (t/select P 0 0) g) "" (conj out current))
+      (recur i g (get-ix (t/select P 0 ix) g) (str current (itos ix)) out))))
 
 ;; - quality of the model 
 ;; - GOAL: Maximize liklihood of the data w.r.t model parameters (statistical modeling)
@@ -173,6 +167,9 @@
     [(t/tensor xs) (t/tensor ys)]))
 
 ;; no one_hot in clj-pytorch
+(defn randn-w [g]
+  (py/call-attr-kw torch "randn" [27 27] {"generator" g}))
+
 (defn one-hot [xs n]
   (tensor/->float (t/eq (t/unsqueeze xs 1) (t/arange n))))
 
@@ -180,8 +177,7 @@
   (t/neg (t/mean (t/log (t/gather probs 1 (t/unsqueeze ys 1))))))
 
 (let [[xs ys] (make-tensors [(first words)])
-      _ (t/manual-seed 2147483647)
-      W (tensor/requires-grad! (t/randn [27 27]) true) ;randomly initialize 27 neurons each neuron receives 27 inputs
+      W (tensor/requires-grad! (randn-w (make-generator)) true) ;randomly initialize 27 neurons each neuron receives 27 inputs
       xenc (one-hot xs 27) ;input to one hot network
       logits (t/matmul xenc W) ;predict log counts
       counts (t/exp logits)  ;counts equivalent to N
@@ -195,8 +191,8 @@
   (println (py.- W grad)))
 
 
-(defmodule BigramNN []
-  :init (fn [self] (nn/register-parameter! self :W (t/randn [27 27]))) ;randomly initialize 27 neurons each neuron receives 27 inputs
+(defmodule BigramNN [g]
+  :init (fn [self] (nn/register-parameter! self :W (randn-w g))) ;randomly initialize 27 neurons each neuron receives 27 inputs
   :forward (fn [self xenc] (t/matmul xenc (py/get-attr self "W"))))
 
 (defn weights [model] (py/get-attr (.py-module model) "W"))
@@ -206,8 +202,7 @@
 (defn train 
   [words iterations gradient-step]
   (let [[xs ys] (make-tensors words)
-        _ (t/manual-seed 2147483647)
-        model (BigramNN)
+        model (BigramNN (make-generator))
         opt (optim/sgd model :lr gradient-step :momentum 0)
         xenc (one-hot xs 27)] 
     (dotimes [_ iterations]
@@ -225,8 +220,9 @@
 (train [(first words)] 10 0.1)
 (def W (train words 100 50))
 
-(t/manual-seed 2147483647)
+^:kind/pprint
 (loop [i 50
+       g (make-generator)
        ix 0
        current ""
        out []]
@@ -234,9 +230,19 @@
         logits (t/matmul xenc W)         
         counts (t/exp logits) 
         p (t/div counts (t/sum counts 1 true))
-        ix (get-ix p)]
+        ix (get-ix p g)]
     (if (zero? i)
       out
       (if (zero? ix) 
-        (recur (dec i) 0 "" (conj out current))
-        (recur i ix (str current (itos ix)) out)))))
+        (recur (dec i) g 0 "" (conj out current))
+        (recur i g ix (str current (itos ix)) out)))))
+
+;; average negative log likelihood on the full name list, so the two models are comparable
+(defn nn-loss [W]
+  (let [[xs ys] (make-tensors words)
+        counts (t/exp (t/matmul (one-hot xs 27) W))
+        probs (t/div counts (t/sum counts 1 true))]
+    (t/item (neg-log-likelihood probs ys))))
+
+(println "table model loss:" (normalized-log-likelyhood train-set-quality))
+(println "neural net loss:" (nn-loss W))

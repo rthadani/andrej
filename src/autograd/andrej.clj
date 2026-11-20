@@ -1,23 +1,21 @@
 (ns autograd.andrej
-  (:require [nextjournal.clerk :as clerk]
-            [aerial.hanami.common :as hc]
-            [aerial.hanami.templates :as ht]
+  (:require [scicloj.clay.v2.api :as clay]
+            [scicloj.tableplot.v1.plotly :as plotly]
+            [scicloj.kindly.v4.kind :as kind]
+            [tablecloth.api :as tc]
             [dorothy.core :as dot]
             [autograd.ops :refer [value + * - ** tanh backward gradient set-gradient] :as ops]
             [clojure.java.io :as io]
             [fastmath.core :as math])
   (:import [javax.imageio ImageIO]))
 
-#_(clerk/serve!
-   {:watch-paths ["src/autograd"]
-    :browse? true})
+#_(clay/make! {:source-path "src/autograd/andrej.clj"})
 
 (defn line-chart
   [xy]
-  (hc/xform ht/line-chart
-            :DATA xy
-            :X :x
-            :Y :y))
+  (-> (tc/dataset xy)
+      (plotly/base {:=x :x :=y :y})
+      (plotly/layer-line)))
 
 (defn f
   [x]
@@ -31,8 +29,7 @@
 
 (->> (range -5 5 0.25)
      (reduce (fn [a x] (conj a {:x x :y (f x)})) [])
-     (line-chart)
-     (clerk/vl))
+     (line-chart))
 
 ;differentiate
 (let [h  0.0000001
@@ -83,7 +80,7 @@
         dot/dot
         (dot/save! file-name {:format :png}))))
 
-;^::clerk/no-cache 
+;
 (def L
   (let [a (value 2.0 "a" (* -3 -2.0)) ; da/dl = da/de(e = a*b therefore b) * de/dl (-2)
         b (value -3.0 "b" (* 2 -2.0))
@@ -94,8 +91,8 @@
         f (value -2.0 "f" 4.0)]
     (-> (assoc (* d f) :label "L") (set-gradient 1.0))))
 
-^::clerk/no-cache (draw-dot L "out.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out.png"))
+^:kindly/hide-value (draw-dot L "out.png")
+^:kind/image (ImageIO/read  (io/file "out.png"))
 
 (defn lol
   []
@@ -137,11 +134,9 @@
 ;tan-h activation
 (->> (range -5 5 0.2)
      (reduce (fn [a x] (conj a {:x x :y (math/tanh x)})) [])
-     (line-chart)
-     (clerk/vl))
+     (line-chart))
 
 ;;nn sample handroll back prop
-^::clerk/no-cache
 (def nn (let [x1 (value 2.0 "x1" -1.5)
               x2 (value 0.0 "x2" 0.5) ;x2 grad = w2.data * grad x2w2 
               w1 (value -3.0 "w1" 1.0)
@@ -154,11 +149,10 @@
               o (-> (assoc (tanh n) :label "o") (set-gradient 1.0))]
           o))
 
-^::clerk/no-cache (draw-dot nn "out2.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out2.png"))
+^:kindly/hide-value (draw-dot nn "out2.png")
+^:kind/image (ImageIO/read  (io/file "out2.png"))
 
 ;;nn with back prop implemented
-^::clerk/no-cache
 (def nn1 (let [x1 (value 2.0 "x1")
                x2 (value 0.0 "x2")
                w1 (value -3.0 "w1")
@@ -171,16 +165,15 @@
                o (-> (assoc (tanh n) :label "o") (set-gradient 1.0))]
            (backward o)))
 
-^::clerk/no-cache (draw-dot nn1 "out3.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out3.png"))
+^:kindly/hide-value (draw-dot nn1 "out3.png")
+^:kind/image (ImageIO/read  (io/file "out3.png"))
 
-^::clerk/no-cache
 (def bug (let [a (value 3.0 "a")
                b (assoc (+ a a) :grad (atom 1.0) :label "b")]
            (backward b)))
 
-^::clerk/no-cache (draw-dot bug "out4.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out4.png"))
+^:kindly/hide-value (draw-dot bug "out4.png")
+^:kind/image (ImageIO/read  (io/file "out4.png"))
 
 (def bug2
   (let [a (value -2.0 "a")
@@ -190,18 +183,17 @@
         f (-> (assoc (* d e) :label "f") (set-gradient 1.0))]
     (backward f)))
 
-^::clerk/no-cache (draw-dot bug2 "out5.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out5.png"))
+^:kindly/hide-value (draw-dot bug2 "out5.png")
+^:kind/image (ImageIO/read  (io/file "out5.png"))
 
 (backward (ops/activate (ops/neuron 2) [2.0 3.0]))
 
 (map :data (ops/forward (ops/layer 2 3) [2.0 3.0]))
 
 (def n (ops/mlp 3 [4 4 1]))
-^::clerk/no-cache
 (def mlp-nn (ops/forward n [2.0 3.0 -1.0]))
-^::clerk/no-cache (draw-dot mlp-nn "out6.png")
-^::clerk/no-cache (ImageIO/read  (io/file "out6.png"))
+^:kindly/hide-value (draw-dot mlp-nn "out6.png")
+^:kind/image (ImageIO/read  (io/file "out6.png"))
 
 ;;train a neural network
 (def xs [[2.0 3.0 -1.0]

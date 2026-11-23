@@ -53,12 +53,20 @@
 (def Y (second x-y))
 (def block-size 3)
 (def embedding-size 10)
+(def hidden-layer-neurons 200)
+(def vocab-size 27)
 
-(def C (t/randn [27 embedding-size]))
-(def W1 (t/randn [(* block-size embedding-size) 200]))
-(def b1 (t/randn [200]))
-(def W2 (t/randn [200 27]))
-(def b2 (t/randn [27]))
+(def C (t/randn [vocab-size embedding-size]))
+;(def W1 (t/randn [(* block-size embedding-size) hidden-layer-neurons]))
+;;to avoid activations in the flat region of tanh we reduce the weights at initialization so we dont have dead neurons
+;(def W1 (t/mul (t/randn [(* block-size embedding-size) hidden-layer-neurons]) 0.2))
+(def W1 (t/mul (t/randn [(* block-size embedding-size) hidden-layer-neurons]) (/ (/ 5 3) (Math/sqrt (* embedding-size block-size))))) ;;kaiming-normal not some random 0.2 to change deviation to 1
+;(def b1 (t/randn [hidden-layer-neurons]))
+(def b1 (t/mul (t/randn [hidden-layer-neurons]) 0.01))
+;(def W2 (t/randn [hidden-layer-neurons vocab-size]))
+(def W2 (t/mul (t/randn [hidden-layer-neurons vocab-size]) 0.01))
+;(def b2 (t/randn [vocab-size]))
+(def b2 (t/mul (t/randn [vocab-size]) 0))
 
 (let [emb (t/index C X)
       h (-> (t/view emb [-1 (* embedding-size block-size)])
@@ -78,7 +86,7 @@
   #_(println Y)
   (println "emb shape" (t/shape emb))
   (println "X at 13,2" (t/tensor-get X 13 2))
-  (println "emb at 13 2 = c 0 1" (t/select (t/select emb 0 13) 0 2) (t/select C 0 1))
+  (println "emb at 13 2 = c at X 13 2" (t/select (t/select emb 0 13) 0 2) (t/select C 0 (t/tensor-get X 13 2)))
   #_(println (-> (t/unbind emb :dim 1) (t/cat :dim 1) t/shape))
   (println "shape h" (t/shape h))
   (println "shape logits" (t/shape logits))
@@ -105,6 +113,9 @@
 (println "train" (mapv t/shape train-set) "dev" (mapv t/shape dev-set) "test" (mapv t/shape test-set))
 
 (def parameters [C W1 b1 W2 b2])
+;;parameters
+(apply + (map t/numel parameters))
+
 (doseq [p parameters] (py/set-attr! p "requires_grad" true))
 (def batch-size 32)
 (def lossi (atom []))
@@ -138,7 +149,7 @@
 
 ;; embedding dimensions 0 and 1 for each character
 ;; is valid only when the embedding size is 2
-(-> (tc/dataset (for [i (range 27)]
+(-> (tc/dataset (for [i (range vocab-size)]
                   {:x (t/tensor-get C i 0) :y (t/tensor-get C i 1) :char (str (itos i))}))
     (plotly/base {:=x :x :=y :y :=text :char :=width 700 :=height 700})
     (plotly/layer-point {:=mark-size 14})
@@ -150,16 +161,20 @@
 ;; validationset final loss result
 (defn validation-test
   [dev-or-test-set]
-  (let [[X Y] dev-or-test-set
-        emb (t/index C X)
-        h (-> (t/view emb [-1 (* embedding-size block-size)])
-              (t/matmul  W1)
-              (t/add b1)
-              (t/tanh-f))
-        logits (t/add (t/matmul h W2) b2)
-        loss (t/cross-entropy-f logits Y)]
-    (println "devset loss" loss)
-    loss))
+  (ctx/no-grad
+   (let [[X Y] dev-or-test-set
+         emb (t/index C X)
+         h (-> (t/view emb [-1 (* embedding-size block-size)])
+               (t/matmul  W1)
+               (t/add b1)
+               (t/tanh-f))
+         logits (t/add (t/matmul h W2) b2)
+         loss (t/cross-entropy-f logits Y)]
+     (println "dev/test set loss" loss)
+     loss)))
+;;validation-loss
+(validation-test validation-test)
+;;test-loss
 (validation-test test-set)
 
 ;;generate names

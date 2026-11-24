@@ -4,7 +4,7 @@
         org.scicloj/noj {:mvn/version "2-beta18"}
         dorothy/dorothy {:mvn/version "0.0.6"}
         io.github.rthadani/clj-pytorch #_{:mvn/version "0.8.1"} {:git/url "https://github.com/rthadani/clj-pytorch"
-                                                                 :git/sha "1885e2109d578493a7f4089c30092e28e2344fce"}}
+                                                                 :git/sha "03d1d80726eb31033d01428435ccb58e14a05f2f"}}
  :aliases
  {:build {:deps {io.github.seancorfield/build-clj
                  {:git/tag "v0.8.2" :git/sha "0ffdb4c"}}

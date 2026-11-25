@@ -144,7 +144,7 @@
 
 ;; log10 of the minibatch loss per step, as in the notebook
 (-> (tc/dataset @lossi)
-    (plotly/base {:=x :step :=y :log-loss})
+    (plotly/base {:=x :step :=y :log-loss :=width 1200})
     (plotly/layer-line))
 
 ;; embedding dimensions 0 and 1 for each character
